@@ -250,6 +250,20 @@ func (s *Store) normalize() {
 	if d.SchemaVersion == 0 {
 		d.SchemaVersion = 1
 	}
+	// Persisted collections must serialise as [] rather than null, so external
+	// tooling (and the example file) sees a consistent shape.
+	if d.APIKeys == nil {
+		d.APIKeys = []*APIKey{}
+	}
+	if d.Accounts == nil {
+		d.Accounts = []*Account{}
+	}
+	if d.Logs == nil {
+		d.Logs = []*LogEntry{}
+	}
+	if d.Benefits == nil {
+		d.Benefits = []*BenefitEvent{}
+	}
 	for _, a := range d.Accounts {
 		if a.ID == "" {
 			a.ID = NewID()
