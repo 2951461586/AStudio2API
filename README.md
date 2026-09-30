@@ -1,10 +1,10 @@
 # AStudio2API
 
-把本机 **AStudio**（讯飞星辰 / Astron Studio 桌面 AI 应用）的上游模型服务，
-逆向复刻成一个 **OpenAI / Anthropic 兼容的 Go 网关**。
+把本机 **AStudio**（讯飞星辰 / Astron Studio）的上游模型服务，逆向复刻成一个
+**OpenAI / Anthropic 兼容的 Go 网关**。
 
-单文件、零外部依赖、纯标准库编译，直接复用桌面应用已经登录好的会话凭据 ——
-只要 AStudio 装好并登录过，网关就能用。
+复用桌面端已登录的会话凭据，无需另申请密钥；纯 Go 标准库实现，单文件约 9 MB，
+零外部依赖。
 
 ```text
 ┌──────────────┐   /v1/chat/completions   ┌─────────────┐   Bearer <model key>   ┌──────────────────────────────┐
@@ -18,9 +18,54 @@
                                     AStudio Data/runtime/acode-home/config.toml
 ```
 
+## 一、特性
+
+### 1.1 协议
+
+- `/v1/chat/completions`、`/v1/responses`（Codex）原生透传
+- `/v1/messages` 完整 Anthropic 双向转换，含 `tool_use` 流式 `input_json_delta`
+- 模型支持别名、slug、目录 ID 三种写法，可自定义别名
+
+### 1.2 账号
+
+- 手机号验证码登录（GeeTest 由浏览器解题）
+- 桌面端会话一键导入 / 手动录入凭据
+- 多账号轮询，按积分余额降权，401 / 429 / 5xx 有界重试换号
+- Bearer 凭据定时保鲜，失效即时重取重放
+
+### 1.3 权益
+
+- 积分、会员、待领弹窗总览
+- 代领每日签到、运营弹窗、客户端下载奖励、Beta 资格，支持兑换码
+
+### 1.4 可观测
+
+- 真实 token 用量，含缓存命中与思考 token
+- 请求日志只记元信息，不存对话内容
+- 单页控制台：账号 / 密钥 / 模型 / 统计 / 日志 / 权益 / 设置
+
+### 1.5 部署
+
+- `docker compose up -d` 即可运行
+- 状态单文件持久化，配置项可用环境变量覆盖
+- 无密钥时拒绝服务，CORS 默认仅放行本机，登录带指数退避限流
+
+### 1.6 上游错误原样透传
+
+网关不替上游做裁决。上游返回什么状态码、什么错误体，就原样回给客户端：
+
+```jsonc
+// 账号没有该模型的权益时，网关原样回传 HTTP 403
+{"error":{"code":11200,
+  "message":"no valid authorization: the account lacks an active order, has insufficient quota, or the order is invalid",
+  "type":"permission_error"}}
+```
+
+> 代价是错误文案保持上游原样（包括英文），换取的是“所见即上游”的可诊断性。
+
 ---
 
-## 一、结论：可以，且链路很短
+## 二、逆向结论：可以，且链路很短
 
 AStudio 本身就是一个"**Electron 外壳 + 本地 Go/Node 服务 + Acode 内核**"的三层结构。
 真正调用大模型的是最内层的 Acode 内核（`@iflytek/astron-code-prod`，一个 Codex 分支），
@@ -59,39 +104,57 @@ AStudio 本身就是一个"**Electron 外壳 + 本地 Go/Node 服务 + Acode 内
 
 ---
 
-## 二、本网关做了什么
+## 三、支持的模型
 
-| 能力 | 说明 |
-| --- | --- |
-| **零配置导入** | 启动时自动定位 AStudio 数据目录，读取会话、换取凭据、拉取模型目录 |
-| **双协议** | `/v1/chat/completions`（OpenAI Chat）与 `/v1/responses`（OpenAI Responses / Codex）**原生透传** |
-| **Anthropic 兼容** | `/v1/messages` 完整双向转换：text / image / tool_use / tool_result、流式 SSE 事件、`stop_reason` 映射 |
-| **模型别名** | `GLM-5.2`、`xopglm52`、`lm_glm52` 三种写法都能路由到同一模型，另可自定义别名 |
-| **账号池** | 多账号轮询；401 自动换凭据重试，429/5xx 自动换号重试（有界 3 次） |
-| **凭据自动保鲜** | 定时用 Cookie 重新换取 Bearer；401 时即时刷新后重放 |
-| **真实用量** | 从响应体 / SSE 帧中提取 prompt / completion / cached / reasoning tokens 并聚合 |
-| **请求日志** | 只记元信息（模型、状态、用量、耗时、首字延迟、错误摘要），**不保存对话内容** |
-| **控制台** | 单页 Web 面板：账号、密钥、模型清单、统计、日志、设置、改密 |
-| **安全默认** | 无密钥时拒绝服务；CORS 默认仅放行本机来源；管理密码登录带指数退避限流 |
-| **权益中心** | 积分/会员/待领项总览，代领运营弹窗（含每日签到）、客户端下载奖励、Beta 资格，支持兑换码 |
-| **多账号保活** | 定时刷新 Bearer 与状态；**余额感知轮转**（积分耗尽的账号自动降权）；失效检测与自动恢复 |
+模型目录由上游动态返回，**随账号权益变化**，下表为实测快照。
 
-### 上游错误原样透传
+### 3.1 实测可用
 
-网关不替上游做裁决。上游返回什么状态码、什么错误体，就原样回给客户端：
+| 显示名 | Slug | 上下文 | 思考档位 | 来源 |
+| --- | --- | ---: | --- | --- |
+| Auto | `astronclaw-auto` | 1M | `none` / `high` | 桌面端目录 |
+| Spark-X2.5 | `spark-x2.5` | 256K | `none` / `high` | 桌面端目录 |
+| GLM-5.2 | `xopglm52` | 1M | `none` / `high` / `max` | 桌面端目录 |
+| DeepSeek-V4-Pro | `xopdeepseekv4pro0813` | 1M | `none` / `high` / `max` | 桌面端目录 |
+| DeepSeek-V4-Flash | `xopdsv4flash0731in` | 1M | `none` / `high` / `max` | 桌面端目录 |
+| DeepSeek-V4-Pro | `xopdeepseekv4pro` | — | — | 账号配置 |
 
-```jsonc
-// 账号没有该模型的权益时，网关原样回传 HTTP 403
-{"error":{"code":11200,
-  "message":"no valid authorization: the account lacks an active order, has insufficient quota, or the order is invalid",
-  "type":"permission_error"}}
-```
+> 前五个来自 `model-manager`（桌面端实际展示的模型），第六个来自 `bot/models/configs`。
+> 同一模型在两处 slug 不同，网关都接受。
+
+### 3.2 目录可见但需权益
+
+以下模型在 `bot/models/configs` 里可见，但账号缺少对应权益，上游直接拒绝：
+
+| 显示名 | Slug | 倍率 | 上游响应 |
+| --- | --- | ---: | --- |
+| GLM-5.1 | `xopglm51` | ×2.0 | `403` 账号无有效订单/额度 |
+| Kimi-K2.6 | `xopkimik26` | ×2.0 | `403` |
+| MiniMax-M2.5 | `xminimaxm25` | ×1.0 | `403` |
+| Qwen3.6-35B-A3B | `xopqwen36v35b` | ×1.0 | `403` |
+| Spark-X2-Agent | `xsparkx2agent` | ×2.0 | `403` |
+| Spark-X2-Flash | `spark-x` | ×0.5 | `400` no category route found |
+
+网关不替上游裁决，原样透传状态码与错误体，并在 `/v1/models` 用 `astron.source`
+字段区分来源（目录类模型排序靠后）。购买套餐后即可变为可用。
+
+### 3.3 模型命名
+
+同一个模型有三种等价写法，`/v1/chat/completions` 的 `model` 字段填任意一种都能路由：
+
+| 写法 | 示例 | 来源 |
+| --- | --- | --- |
+| 显示名 | `GLM-5.2` | 桌面端 UI 上看到的名字 |
+| Slug | `xopglm52` | 上游推理接口的模型 ID |
+| 目录 ID | `lm_glm52` | `bot/models/configs` 的稳定 id |
+
+还可在控制台「设置 → 模型别名」里自定义，格式 `别名=目标`，例如 `glm=xopglm52`。
 
 ---
 
-## 三、签到与多账号保活
+## 四、签到与多账号保活
 
-### 3.1 关于「签到」：形态和 Qoder 不一样
+### 4.1 关于「签到」：形态和 Qoder 不一样
 
 星辰侧**没有** Qoder 那种 `GET /sash/api/v1/me/campaigns` → `claim` 的签到接口。
 它的「每日签到」是**运营弹窗下发**的，官方客户端在用户关闭弹窗时领取：
@@ -112,7 +175,7 @@ POST {workspace}/client-popups/complete   {popupId, instanceKey}
 
 网关的代领逻辑就是复刻官方客户端的同一动作，因此**不需要伪造任何签名**。
 
-### 3.2 可用的权益接口（全部实测通过）
+### 4.2 可用的权益接口（全部实测通过）
 
 | 接口 | 方法 | 用途 |
 | --- | --- | --- |
@@ -129,7 +192,7 @@ POST {workspace}/client-popups/complete   {popupId, instanceKey}
 > 实测数据：`points/balance` 返回 `totalBalance` / `sparkTotalBalance` / `activityNextExpireTime` 等；
 > `membership/me` 的 `uid` 是**数字**而非字符串（网关已用宽松标量类型兼容）。
 
-### 3.3 诚实记账：报告真实增量
+### 4.3 诚实记账：报告真实增量
 
 `client-download-reward/claim` 之类的接口即使**今日已领**也可能返回成功。
 网关因此会在领取前后各取一次余额，用 **`points_delta`** 报告真实到账的积分：
@@ -139,7 +202,7 @@ POST {workspace}/client-popups/complete   {popupId, instanceKey}
 
 不会把「接口返回 200」谎报成「签到成功」。
 
-### 3.4 多账号轮转保活
+### 4.4 多账号轮转保活
 
 | 机制 | 说明 |
 | --- | --- |
@@ -152,20 +215,7 @@ POST {workspace}/client-popups/complete   {popupId, instanceKey}
 调度器每分钟读一次设置，**面板改动无需重启即时生效**；所有后台任务挂在
 一个可取消的根 context 上，关机时立即中止在途请求。
 
-### 3.5 新增端点
-
-| 端点 | 方法 | 说明 |
-| --- | --- | --- |
-| `/admin/api/checkin` | POST | 签到；`{id}` 指定单账号，空对象则全部账号 |
-| `/admin/api/keepalive` | POST | 保活；同上 |
-| `/admin/api/redeem` | POST | `{id?, code}` 兑换码 |
-| `/admin/api/benefits` | GET/DELETE | 权益事件日志 / 清空 |
-| `/admin/api/accounts` | POST | 新增 `action=domain` 设置域账号（Beta 领取用） |
-| `/admin/api/login/geetest` | GET | 取 GeeTest 配置（添加账号用） |
-| `/admin/api/login/sms` | POST | `{mobile, geetest_challenge, geetest_validate, geetest_seccode}` |
-| `/admin/api/login/verify` | POST | `{mobile, verify_code}` 登录并加入账号池 |
-
-### 3.6 相关设置
+### 4.5 相关设置
 
 | 键 | 默认 | 说明 |
 | --- | --- | --- |
@@ -179,9 +229,9 @@ POST {workspace}/client-popups/complete   {popupId, instanceKey}
 
 ---
 
-## 四、快速开始
+## 五、快速开始
 
-### 4.1 本机运行
+### 5.1 本机运行
 
 ```bash
 go build -ldflags="-s -w" -o astudio2api .
@@ -197,7 +247,7 @@ go build -ldflags="-s -w" -o astudio2api .
 2026/01/01 09:00:00 AStudio2API listening on http://0.0.0.0:10086
 ```
 
-### 4.2 Docker 部署
+### 5.2 Docker 部署
 
 镜像只打包一个静态 Go 二进制（≈9 MB），构建阶段不需要联网拉依赖
 （纯标准库，`go.mod` 无 require）。
@@ -241,7 +291,7 @@ docker run -d --name astudio2api --restart unless-stopped \
 
 > 在容器内运行时，`ASTUDIO_ADMIN_PASSWORD` 每次启动都会覆盖控制台里保存的密码。
 
-### 4.3 添加账号
+### 5.3 添加账号
 
 两种方式，按场景选：
 
@@ -273,7 +323,7 @@ SDK 与官方客户端同源：`https://static.geetest.com/static/tools/gt.js`�
 控制台 → 账号 → 「一键导入」，留空自动探测，或手填数据目录
 （如 `F:\IDE\AStudio Data`）。仅适用于本机有桌面端的场景。
 
-### 4.4 调用
+### 5.4 调用
 
 ```bash
 # 先在控制台「API 密钥」建一个 sk-...
@@ -283,7 +333,7 @@ curl http://127.0.0.1:10086/v1/chat/completions \
   -d '{"model":"GLM-5.2","messages":[{"role":"user","content":"你好"}],"stream":true}'
 ```
 
-### 4.5 客户端接入
+### 5.5 客户端接入
 
 | 客户端 | Base URL | 备注 |
 | --- | --- | --- |
@@ -293,7 +343,11 @@ curl http://127.0.0.1:10086/v1/chat/completions \
 
 ---
 
-## 五、端点
+## 六、端点
+
+### 6.1 推理接口
+
+鉴权：`Authorization: Bearer <key>` 或 `x-api-key`。未创建任何密钥时，控制台密码可临时充当密钥。
 
 | 端点 | 方法 | 说明 |
 | --- | --- | --- |
@@ -301,14 +355,42 @@ curl http://127.0.0.1:10086/v1/chat/completions \
 | `/v1/responses` | POST | OpenAI Responses API（Codex） |
 | `/v1/messages` | POST | Anthropic Messages API |
 | `/v1/models` | GET | 模型清单（含 `astron` 扩展：显示名、上下文、思考档位、来源） |
-| `/health` `/healthz` | GET | 健康检查（免鉴权） |
-| `/ping` | GET | 纯文本 `pong`（免鉴权，供探针） |
-| `/` | GET | 控制台 |
-| `/admin/api/*` | — | 控制台接口（登录、密钥、账号、模型、日志、统计、设置） |
+
+### 6.2 探活接口
+
+| 端点 | 方法 | 说明 |
+| --- | --- | --- |
+| `/health` `/healthz` | GET | 健康检查，含账号/模型就绪计数（免鉴权） |
+| `/ping` | GET | 纯文本 `pong`，不查账号池（免鉴权，供容器探针） |
+| `/` | GET | 控制台页面 |
+
+### 6.3 控制台接口
+
+除 `login` 外均需面板登录会话。
+
+| 端点 | 方法 | 说明 |
+| --- | --- | --- |
+| `/admin/api/login` | POST | 面板密码登录 |
+| `/admin/api/logout` | POST | 退出登录 |
+| `/admin/api/state` | GET | 全量状态（账号 / 密钥 / 模型 / 统计 / 日志 / 权益） |
+| `/admin/api/keys` | GET / POST / DELETE | API 密钥增删与启停 |
+| `/admin/api/accounts` | POST | 账号管理：`import` / `manual` / `refresh` / `toggle` / `domain` / `remove` |
+| `/admin/api/login/geetest` | GET | 取 GeeTest 配置（添加账号用） |
+| `/admin/api/login/sms` | POST | `{mobile, geetest_challenge, geetest_validate, geetest_seccode}` |
+| `/admin/api/login/verify` | POST | `{mobile, verify_code}` 登录并加入账号池 |
+| `/admin/api/checkin` | POST | 签到；`{id}` 指定单账号，空对象则全部账号 |
+| `/admin/api/keepalive` | POST | 保活；同上 |
+| `/admin/api/redeem` | POST | `{id?, code}` 兑换码 |
+| `/admin/api/benefits` | GET / DELETE | 权益事件日志 / 清空 |
+| `/admin/api/models` | GET / POST | 查看 / 刷新模型目录 |
+| `/admin/api/logs` | GET | 请求日志（`?limit=`） |
+| `/admin/api/stats` | GET / DELETE | 统计 / 清空 |
+| `/admin/api/settings` | POST | 更新设置 |
+| `/admin/api/password` | POST | 修改面板密码 |
 
 ---
 
-## 六、配置
+## 七、配置
 
 优先级：**命令行参数 > 环境变量 > 控制台设置 > 默认值**。
 
@@ -324,7 +406,7 @@ curl http://127.0.0.1:10086/v1/chat/completions \
 控制台内还可调：上游 Base URL、模型目录 API、工作区 API、`studioVersion`、
 上游并发上限、响应超时、流空闲超时、日志保留天数/条数、CORS 来源、模型别名。
 
-### 6.1 状态文件与脱敏
+### 7.1 状态文件与脱敏
 
 所有状态（账号凭据、API 密钥、统计、日志、权益事件）存在单文件里，
 路径由 `ASTUDIO_DATA_PATH` 决定：
@@ -345,7 +427,7 @@ astudio2api-data.example.json
 
 泄露后的处置：删掉 `data/` 重新用手机号登录，并在控制台删掉旧 API 密钥。
 
-### 6.2 仓库里没有什么
+### 7.2 仓库里没有什么
 
 | 不包含 | 原因 |
 | --- | --- |
@@ -355,7 +437,7 @@ astudio2api-data.example.json
 
 ---
 
-## 七、与参考项目的对应关系
+## 八、与参考项目的对应关系
 
 参考的三个 qoder2api 项目（Python hub / Go 桥 / Go 重写版）解决的是
 「Qoder 需要 COSY 签名 + 设备指纹」这类**主动伪造**问题；
@@ -372,7 +454,7 @@ AStudio 这条链路**不需要签名伪造**，所以本项目的复杂度集�
 
 ---
 
-## 八、注意事项
+## 九、注意事项
 
 - **本项目仅供本机 / 内网自用与协议研究。** 上游服务的使用受讯飞星辰服务条款约束，
   请勿公开暴露到公网或用于商业转售。
@@ -385,7 +467,7 @@ AStudio 这条链路**不需要签名伪造**，所以本项目的复杂度集�
 
 ---
 
-## 九、项目结构
+## 十、项目结构
 
 ```text
 astudio2api/
