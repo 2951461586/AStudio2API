@@ -1,0 +1,36 @@
+MIT License
+
+Copyright (c) 2026 Lizi
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+---
+
+## 附加说明（免责声明）
+
+本项目的许可仅覆盖本仓库中的源代码。
+
+本项目通过分析本机已安装的 AStudio 桌面应用，还原了其与上游服务之间的
+通信协议，目的是让用户能够以标准 OpenAI / Anthropic 接口访问**自己的**
+账号与额度。项目本身不包含、也不分发任何第三方软件、模型权重或私有数据。
+
+使用者需自行确保其使用方式符合讯飞星辰 / AStudio 的服务条款与当地法律。
+作者不对因使用本项目产生的账号封禁、额度损失或其它后果承担责任。
+
+请勿将本服务公开暴露至互联网或用于商业转售。

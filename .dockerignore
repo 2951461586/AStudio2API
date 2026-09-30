@@ -1,0 +1,26 @@
+# Build context hygiene.
+# The reverse-engineered AStudio bundle dump is ~148 MB and is not needed to
+# build the gateway.
+extract/
+*.exe
+astudio2api.exe
+
+# Local state contains account credentials — never ship it into an image.
+data/
+data.tmp.json
+astudio2api-data.json
+*.tmp.json
+cj.tmp.txt
+
+# VCS / editor
+.git/
+.gitignore
+.github/
+.idea/
+.vscode/
+*.swp
+.DS_Store
+
+# Docs and reference material
+*.md
+!README.md

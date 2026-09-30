@@ -1,0 +1,47 @@
+# AStudio2API —— Docker 部署
+#
+# 启动：
+#   ASTUDIO_ADMIN_PASSWORD='换成强密码' docker compose up -d --build
+# 查看日志：
+#   docker compose logs -f
+# 控制台：
+#   http://<服务器IP>:10086/
+#
+# 首次使用没有账号：打开控制台 → 账号 → 手机号验证码登录。
+---
+services:
+  astudio2api:
+    build:
+      context: .
+      args:
+        VERSION: "1.0.0"
+    image: astudio2api:latest
+    container_name: astudio2api
+    restart: unless-stopped
+
+    ports:
+      # 默认只监听本机更安全；要暴露到局域网改成 "10086:10086"
+      - "127.0.0.1:10086:10086"
+
+    environment:
+      ASTUDIO_HOST: "0.0.0.0"
+      ASTUDIO_PORT: "10086"
+      # 状态文件（含账号凭据）必须落在挂载卷里
+      ASTUDIO_DATA_PATH: /data/astudio2api-data.json
+      # 每次启动都会覆盖为这个值；留空则使用控制台里保存的密码
+      ASTUDIO_ADMIN_PASSWORD: "${ASTUDIO_ADMIN_PASSWORD:-admin}"
+      TZ: Asia/Shanghai
+
+    volumes:
+      - ./data:/data
+
+    # 仅本机部署时无需额外网络；如需让容器访问宿主机代理，取消下面注释
+    # extra_hosts:
+    #   - "host.docker.internal:host-gateway"
+
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:10086/ping"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
