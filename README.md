@@ -322,7 +322,7 @@ docker run -d --name astudio2api --restart unless-stopped \
 
 ### 5.3 添加账号
 
-两种方式，按场景选：
+三种方式，按场景选：
 
 #### 方式一：手机号验证码登录（推荐，Docker 下唯一可用）
 
@@ -351,6 +351,25 @@ SDK 与官方客户端同源：`https://static.geetest.com/static/tools/gt.js`�
 
 控制台 → 账号 → 「一键导入」，留空自动探测，或手填数据目录
 （如 `F:\IDE\AStudio Data`）。仅适用于本机有桌面端的场景。
+
+#### 方式三：远端服务器（没有桌面端）
+
+远端 / 容器场景**不需要下载桌面端**，直接用「方式一」的手机号验证码登录即可。
+登录成功后网关保存的是**完整会话**（`token` + `ssoSessionId`）；每日签到走的
+`POST tenant-app/v2/init-app` 正是用这个会话 cookie 认证的，所以之后每天的自动
+签到都不再需要浏览器，更不需要桌面端。
+
+需要人工做的只有一次：在浏览器里解 GeeTest + 输短信码。按安全性排序：
+
+| 做法 | 说明 |
+| --- | --- |
+| **SSH 端口转发**（推荐） | 面板继续只绑 `127.0.0.1`，本机 `ssh -L 10086:127.0.0.1:10086 user@server`，再在本地浏览器打开 `http://127.0.0.1:10086/` 登录 |
+| 临时开放面板 | compose 端口改为 `"10086:10086"`，登录完立即改回并 `docker compose up -d` |
+| 本地登录后搬运 | 在任意一台能开浏览器的机器上跑一次网关并短信登录，把生成的 `data/astudio2api-data.json` 拷到服务器（**含凭据，注意保密**） |
+
+> ⚠️ `runtime/acode-home/config.toml` 的兜底导入（`acode-config`）**只有 bearer、没有会话
+> cookie**，因此**不能**用于签到，只能当模型凭据。若账号 `last_error`/`status_note` 出现
+> 会话相关报错，说明 cookie 已失效，回面板重做一次短信登录即可。
 
 ### 5.4 调用
 

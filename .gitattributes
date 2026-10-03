@@ -1,12 +1,41 @@
-# 仓库内统一用 LF，避免 Windows 检出时的 CRLF 噪声
+# 仓库内统一使用 LF 行尾。
+#
+#   * 显式 eol=lf 优先于本地 core.autocrlf（Git for Windows 默认 true），
+#     避免 Windows 检出后出现 CRLF 噪声与 “CRLF will be replaced by LF” 告警。
+#   * text=auto 让 git 按内容判断文本；下面再把常见文本类型显式声明一遍，
+#     以免个别文件被内容嗅探误判成二进制。
+#
+# 若本地曾用 core.autocrlf=true 检出过 CRLF，执行一次
+#   git add --renormalize . && git commit
+# 即可把索引与工作区统一回 LF。
 * text=auto eol=lf
+
+# 常见文本类型（显式声明，不依赖内容嗅探）
+*.go       text eol=lf
+*.mod      text eol=lf
+*.sum      text eol=lf
+*.md       text eol=lf
+*.json     text eol=lf
+*.yml      text eol=lf
+*.yaml     text eol=lf
+*.toml     text eol=lf
+*.sh       text eol=lf
+Dockerfile text eol=lf
+Makefile   text eol=lf
 
 # Windows 专用脚本保留 CRLF
 *.bat text eol=crlf
 *.cmd text eol=crlf
 
-# 二进制
-*.png binary
-*.ico binary
-*.icns binary
-*.exe binary
+# 二进制文件：禁止任何行尾转换
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.webp  binary
+*.ico   binary
+*.icns  binary
+*.exe   binary
+*.dll   binary
+*.so    binary
+*.dylib binary
