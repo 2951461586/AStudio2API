@@ -257,6 +257,26 @@ func (c *Client) FetchUserInfo(ctx context.Context, s *Session) (*AccountInfo, e
 	return info, nil
 }
 
+// TenantApp mirrors POST tenant-app/v2/init-app.
+type TenantApp struct {
+	Banned bool `json:"banned"`
+}
+
+// InitTenantApp performs POST tenant-app/v2/init-app with the session cookie.
+//
+// This is the upstream's "daily login" action: the first call for an account on
+// a given day credits that day's reward (for the National Day event, 5000 Spark
+// plus plan-dependent points) and queues a DAILY_REWARD_DIALOG banner. Completing
+// that banner only dismisses it, so this call — not client-popups/complete — is
+// what actually earns the sign-in reward. Repeat calls on the same day are no-ops.
+func (c *Client) InitTenantApp(ctx context.Context, s *Session) (*TenantApp, error) {
+	var out TenantApp
+	if err := c.envelopeRequest(ctx, http.MethodPost, "tenant-app/v2/init-app", s, "", nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
 // InferenceURL joins the configured inference base with a sub path.
 func (c *Client) InferenceURL(path string) string {
 	return c.Upstream + "/" + strings.TrimLeft(path, "/")

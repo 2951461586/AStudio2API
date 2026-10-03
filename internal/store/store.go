@@ -93,6 +93,10 @@ type Settings struct {
 	CheckinCompletePopups bool `json:"checkin_complete_popups"`
 	CheckinClaimDownload  bool `json:"checkin_claim_download_reward"`
 	CheckinClaimBeta      bool `json:"checkin_claim_beta"`
+
+	// PasswordGenerated marks a first-run random password that the operator has
+	// not changed yet. The panel uses it to force a password change.
+	PasswordGenerated bool `json:"password_generated"`
 }
 
 // ModelStat aggregates usage for one model slug.
@@ -165,6 +169,10 @@ type Data struct {
 	Stats         Stats           `json:"stats"`
 	Logs          []*LogEntry     `json:"logs"`
 	Benefits      []*BenefitEvent `json:"benefits"`
+	// LastCheckinDay is the local date (YYYY-MM-DD) of the last automatic
+	// check-in run, so restarts do not repeat it and a machine that was off or
+	// asleep over the configured hour can still catch up.
+	LastCheckinDay string `json:"last_checkin_day,omitempty"`
 }
 
 // Store wraps Data with a mutex and atomic persistence.
@@ -179,9 +187,11 @@ type Store struct {
 // DefaultSettings returns the out-of-the-box configuration.
 func DefaultSettings() Settings {
 	return Settings{
-		Host:             "0.0.0.0",
-		Port:             10086,
-		Password:         "admin",
+		Host: "0.0.0.0",
+		Port: 10086,
+		// Password is intentionally empty: main generates a random one on first
+		// run instead of shipping a guessable default.
+		Password:         "",
 		UpstreamBase:     "https://maas-api.cn-huabei-1.xf-yun.com/v1",
 		ModelsBase:       "https://astronstudio-api-volces-prod.xf-yun.com/api/v1/model-manager",
 		WorkspaceAPI:     "https://agent.xfyun.cn/xingchen-studio",
@@ -705,6 +715,24 @@ func (s *Store) ClearBenefits() error {
 	return s.saveLocked()
 }
 
+// LastCheckinDay returns the local date of the last automatic check-in run.
+func (s *Store) LastCheckinDay() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.data.LastCheckinDay
+}
+
+// SetLastCheckinDay records the local date of the last automatic check-in run.
+func (s *Store) SetLastCheckinDay(day string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.data.LastCheckinDay == day {
+		return
+	}
+	s.data.LastCheckinDay = day
+	s.dirty = true
+}
+
 // --- persistence ------------------------------------------------------------
 
 // Save flushes pending changes to disk.
@@ -745,6 +773,9 @@ var ErrDuplicate = errors.New("duplicate entry")
 
 // NewID returns a short random identifier.
 func NewID() string { return randomHex(8) }
+
+// RandomPassword returns a random password for first-run panel setup.
+func RandomPassword() string { return randomHex(16) }
 
 func randomHex(n int) string {
 	buf := make([]byte, n)

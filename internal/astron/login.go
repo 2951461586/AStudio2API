@@ -195,11 +195,9 @@ func (c *Client) LoginWithSms(ctx context.Context, mobile, verifyCode string) (*
 	}
 	session := result.Session()
 
-	// tenant-app/v2/init-app reports whether the account is banned.
-	var tenant struct {
-		Banned bool `json:"banned"`
-	}
-	if err := c.envelopeRequest(ctx, http.MethodPost, "tenant-app/v2/init-app", session, "", nil, &tenant); err == nil {
+	// tenant-app/v2/init-app reports whether the account is banned. It is also
+	// the daily-login call that credits the day's reward (see InitTenantApp).
+	if tenant, err := c.InitTenantApp(ctx, session); err == nil {
 		result.Banned = tenant.Banned
 		session.Banned = tenant.Banned
 	}

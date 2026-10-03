@@ -96,7 +96,9 @@ func (s *Server) adminLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	expected := s.store.Settings().Password
-	if subtle.ConstantTimeCompare([]byte(body.Password), []byte(expected)) != 1 {
+	// An unset/empty password must never authenticate, even if the panel
+	// password was never configured (defence in depth for a failed first run).
+	if expected == "" || subtle.ConstantTimeCompare([]byte(body.Password), []byte(expected)) != 1 {
 		s.recordLoginFailure(ip)
 		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "Incorrect password."})
 		return
@@ -553,7 +555,10 @@ func (s *Server) adminPassword(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "New password must be at least 4 characters."})
 		return
 	}
-	if err := s.store.UpdateSettings(func(st *store.Settings) { st.Password = body.Next }); err != nil {
+	if err := s.store.UpdateSettings(func(st *store.Settings) {
+		st.Password = body.Next
+		st.PasswordGenerated = false
+	}); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
 	}

@@ -154,26 +154,42 @@ AStudio 本身就是一个"**Electron 外壳 + 本地 Go/Node 服务 + Acode 内
 
 ## 四、签到与多账号保活
 
-### 4.1 关于「签到」：形态和 Qoder 不一样
+### 4.1 关于「签到」：发奖靠 `init-app`，不是靠弹窗
 
-星辰侧**没有** Qoder 那种 `GET /sash/api/v1/me/campaigns` → `claim` 的签到接口。
-它的「每日签到」是**运营弹窗下发**的，官方客户端在用户关闭弹窗时领取：
+星辰侧**没有** Qoder 那种 `.../campaigns` → `claim` 的签到接口。真正的「每日登录」
+动作是：
+
+```text
+POST {workspace}/tenant-app/v2/init-app      # 带会话 Cookie，无 body
+  -> { flag: true, code: 0, data: { banned: false } }
+```
+
+**当日首次调用即入账当日奖励**（国庆活动为 5000 Spark + 套餐对应积分），并下发一个
+`DAILY_REWARD_DIALOG` 横幅通知；重复调用不会重复发放。官方客户端在启动 / 登录时都会
+调用它。
+
+服务端随后用运营弹窗把「到账通知」推给客户端：
 
 ```text
 GET  {workspace}/client-popups/pending
   -> [{ componentType: "DAILY_REWARD_DIALOG", popupId, instanceKey, payload, ... }]
-POST {workspace}/client-popups/complete   {popupId, instanceKey}
+POST {workspace}/client-popups/complete   {popupId, instanceKey}   # 仅关闭横幅
 ```
+
+> ⚠️ 只调用 `client-popups/complete` **不会发放积分**，它只是把横幅关掉。
+> 实测：`complete` 返回成功、弹窗消失，余额纹丝不动；`init-app` 一调用，余额立刻
+> +5000 Spark + 积分。所以网关每天的签到动作是 `init-app`，`complete` 只是顺手清理横幅。
 
 `componentType` 只有三种会被客户端处理（对齐 bundle 里的 `SUPPORTED_COMPONENT_TYPES`）：
 
 | componentType | 含义 |
 | --- | --- |
-| `DAILY_REWARD_DIALOG` | **每日签到奖励** |
+| `DAILY_REWARD_DIALOG` | **每日奖励到账通知（横幅）** |
 | `NEW_USER_DIALOG` | 新人奖励 |
 | `CLIENT_DOWNLOAD_REWARD_DIALOG` | 客户端下载奖励（对应 `client-download-reward/claim`） |
 
-网关的代领逻辑就是复刻官方客户端的同一动作，因此**不需要伪造任何签名**。
+网关复刻的是官方客户端在启动 / 登录时执行的同一动作，因此**不需要伪造任何签名，
+也不需要桌面端常驻**。
 
 ### 4.2 可用的权益接口（全部实测通过）
 
@@ -194,8 +210,9 @@ POST {workspace}/client-popups/complete   {popupId, instanceKey}
 
 ### 4.3 诚实记账：报告真实增量
 
-`client-download-reward/claim` 之类的接口即使**今日已领**也可能返回成功。
-网关因此会在领取前后各取一次余额，用 **`points_delta`** 报告真实到账的积分：
+`client-download-reward/claim` 之类的接口即使**今日已领**也可能返回成功，
+`init-app` 重复调用也不会有新入账。网关因此在领取前后各取一次余额，用
+**`points_delta`** 报告真实到账的积分（含每日登录奖励）：
 
 - 有增量 → `签到成功：+N 积分`
 - 无增量但调用成功 → `调用成功但积分无变化（可能今日已领）`
@@ -210,7 +227,7 @@ POST {workspace}/client-popups/complete   {popupId, instanceKey}
 | **状态保活** | 定时拉取积分/会员/弹窗，同时让 Cookie 保持活跃 |
 | **余额感知轮转** | 积分与 Spark 均为 0 的账号自动降权；两轮回退策略保证不会硬阻塞请求 |
 | **失败转移** | 401 / 429 / 5xx 自动换号重试（有界 3 次），失败账号进入短冷却 |
-| **自动签到** | 每日指定小时运行（默认关闭），按账号分别记录结果 |
+| **自动签到** | 每日调用 `init-app` 发奖；过了设定小时即补签（含启动即补签，不必等到整点），按账号分别记录结果 |
 
 调度器每分钟读一次设置，**面板改动无需重启即时生效**；所有后台任务挂在
 一个可取消的根 context 上，关机时立即中止在途请求。
@@ -219,8 +236,8 @@ POST {workspace}/client-popups/complete   {popupId, instanceKey}
 
 | 键 | 默认 | 说明 |
 | --- | --- | --- |
-| `auto_checkin` | `false` | 每日自动签到 |
-| `checkin_hour` | `9` | 自动签到时间（0-23） |
+| `auto_checkin` | `false` | 每日自动签到（调用 `init-app` 发奖） |
+| `checkin_hour` | `9` | 自动签到时间（0-23）；过点后任意时刻补签，启动即补签 |
 | `keepalive_minutes` | `0` | 保活间隔分钟数，0 = 关闭 |
 | `balance_aware_rotation` | `true` | 余额感知轮转 |
 | `checkin_complete_popups` | `true` | 代领运营弹窗（含每日签到） |
@@ -238,7 +255,19 @@ go build -ldflags="-s -w" -o astudio2api .
 ./astudio2api
 ```
 
-默认监听 `0.0.0.0:10086`，控制台在 <http://127.0.0.1:10086/>，默认密码 `admin`。
+默认监听 `0.0.0.0:10086`，控制台在 <http://127.0.0.1:10086/>。
+
+**首次启动不再使用固定默认密码**：没有通过 `-password` / `ASTUDIO_ADMIN_PASSWORD`
+指定时，网关会生成一个随机密码并打印在日志中：
+
+```text
+──────────────────────────────────────────────────────────
+ 首次启动：已生成控制台密码  9f2c...（32 位十六进制）
+ 登录 http://127.0.0.1:10086/ 后请在「设置」中修改
+──────────────────────────────────────────────────────────
+```
+
+登录后控制台会自动切到「设置」并提示修改；改密后该提示消失。
 
 启动日志会打印自动导入结果：
 
@@ -399,7 +428,7 @@ curl http://127.0.0.1:10086/v1/chat/completions \
 | `-host` | `ASTUDIO_HOST` | `0.0.0.0` | 监听地址 |
 | `-port` | `ASTUDIO_PORT` | `10086` | 监听端口 |
 | `-data` | `ASTUDIO_DATA_PATH` | 可执行文件同目录 `astudio2api-data.json` | 状态文件 |
-| `-password` | `ASTUDIO_ADMIN_PASSWORD` | `admin` | 控制台密码 |
+| `-password` | `ASTUDIO_ADMIN_PASSWORD` | 首次启动随机生成并打印在日志中 | 控制台密码 |
 | `-astron-dir` | `ASTUDIO_DATA_DIR` | 自动探测 | AStudio 数据目录 |
 | `-sync-once` | — | — | 只刷新一次模型目录后退出 |
 
@@ -463,7 +492,8 @@ AStudio 这条链路**不需要签名伪造**，所以本项目的复杂度集�
 - 上游模型清单里会包含**当前账号无权调用**的模型（存在于 `bot/models/configs`
   但不在权益内），调用时上游会返回 403 + 业务码。网关已用 `astron.source` 字段
   区分来源，目录类模型排序靠后。
-- 首次部署请立刻修改默认密码，并按需在设置里收紧 CORS 来源。
+- 首次启动的随机密码打印在服务日志里，登录后请立即在「设置」中修改，
+  或先用 `ASTUDIO_ADMIN_PASSWORD` 指定；并按需收紧 CORS 来源。
 
 ---
 

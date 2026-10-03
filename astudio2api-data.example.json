@@ -5,6 +5,7 @@
     "host": "0.0.0.0",
     "port": 10086,
     "password": "CHANGE_ME",
+    "password_generated": false,
     "upstream_base": "https://maas-api.cn-huabei-1.xf-yun.com/v1",
     "models_base": "https://astronstudio-api-volces-prod.xf-yun.com/api/v1/model-manager",
     "workspace_api": "https://agent.xfyun.cn/xingchen-studio",

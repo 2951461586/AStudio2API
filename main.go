@@ -18,7 +18,6 @@ import (
 	"syscall"
 	"time"
 
-	"astudio2api/internal/astron"
 	"astudio2api/internal/registry"
 	"astudio2api/internal/server"
 	"astudio2api/internal/store"
@@ -51,9 +50,9 @@ func main() {
 	}
 
 	applyEnvOverrides(st, *hostFlag, *portFlag, *passwordFlag, *astronFlag)
+	ensureAdminPassword(st, firstNonEmpty(*passwordFlag, os.Getenv("ASTUDIO_ADMIN_PASSWORD")))
 
 	settings := st.Settings()
-	client := astron.NewClient(settings.UpstreamBase, settings.ModelsBase, settings.WorkspaceAPI, settings.StudioVersion)
 	reg := registry.New()
 
 	srv := server.New(st, reg, version)
@@ -69,8 +68,6 @@ func main() {
 		log.Printf("model directory refreshed")
 		return
 	}
-
-	_ = client
 
 	// Periodic maintenance: flush state and keep the directory reasonably fresh.
 	stop := make(chan struct{})
@@ -117,11 +114,42 @@ func applyEnvOverrides(st *store.Store, host string, port int, password, astronD
 		}
 		if v := firstNonEmpty(password, envPassword); v != "" {
 			s.Password = v
+			s.PasswordGenerated = false
 		}
 		if v := firstNonEmpty(astronDir, envAstron); v != "" {
 			s.AstronDataDir = v
 		}
 	})
+}
+
+// legacyDefaultPassword is the guessable password older releases shipped.
+// A state file still holding it is treated as unconfigured on upgrade.
+const legacyDefaultPassword = "admin"
+
+// ensureAdminPassword guarantees the panel never runs on a guessable default.
+// An explicitly configured password (flag or env) always wins; otherwise the
+// first run, or an upgrade still carrying the legacy "admin" value, generates a
+// random password, persists it and prints it once.
+func ensureAdminPassword(st *store.Store, explicit string) {
+	if explicit != "" {
+		return // applyEnvOverrides already stored the operator's choice
+	}
+	s := st.Settings()
+	if pw := strings.TrimSpace(s.Password); pw != "" && pw != legacyDefaultPassword {
+		return
+	}
+	password := store.RandomPassword()
+	if err := st.UpdateSettings(func(x *store.Settings) {
+		x.Password = password
+		x.PasswordGenerated = true
+	}); err != nil {
+		log.Printf("could not persist the initial panel password: %v", err)
+		return
+	}
+	log.Printf("──────────────────────────────────────────────────────────")
+	log.Printf(" 首次启动：已生成控制台密码  %s", password)
+	log.Printf(" 登录 http://127.0.0.1:%d/ 后请在「设置」中修改", s.Port)
+	log.Printf("──────────────────────────────────────────────────────────")
 }
 
 // bootstrap imports the desktop session (if any) and refreshes the directory.
@@ -168,8 +196,10 @@ func maintain(srv *server.Server, st *store.Store, stop <-chan struct{}) {
 		cancelAll()
 	}()
 
-	var lastCheckinDay string
 	var lastKeepalive time.Time
+
+	// 启动即补签：不必等到下一个整点，也能补上关机 / 睡眠期间错过的签到。
+	maybeCheckin(ctx, srv, st)
 
 	for {
 		select {
@@ -198,21 +228,9 @@ func maintain(srv *server.Server, st *store.Store, stop <-chan struct{}) {
 			settings := st.Settings()
 			now := time.Now()
 
-			if settings.AutoCheckin && now.Hour() == settings.CheckinHour {
-				if day := now.Format("2006-01-02"); lastCheckinDay != day {
-					lastCheckinDay = day
-					checkCtx, cancel := context.WithTimeout(ctx, 3*time.Minute)
-					results := srv.CheckinAll(checkCtx)
-					cancel()
-					for _, r := range results {
-						if r.Error != "" {
-							log.Printf("签到失败 %s: %s", r.Name, r.Error)
-							continue
-						}
-						log.Printf("签到完成 %s: 积分=%d Spark=%d 领取=%v", r.Name, r.Points, r.Spark, r.Actions)
-					}
-				}
-			}
+			// 过点即补：哪怕进程整点不在（关机 / 睡眠 / 晚启动），只要已经过了
+			// checkin_hour 且今天还没跑过，就补一次。
+			maybeCheckin(ctx, srv, st)
 
 			if settings.KeepaliveMinutes > 0 && now.Sub(lastKeepalive) >= time.Duration(settings.KeepaliveMinutes)*time.Minute {
 				lastKeepalive = now
@@ -227,6 +245,45 @@ func maintain(srv *server.Server, st *store.Store, stop <-chan struct{}) {
 			}
 		}
 	}
+}
+
+// maybeCheckin runs the daily check-in once per day, as soon as the configured
+// hour has been reached. It is called on start-up and on every tick, so a machine
+// that was off or asleep over the configured hour still catches up. The run date
+// is persisted, so restarts do not repeat a completed check-in.
+func maybeCheckin(ctx context.Context, srv *server.Server, st *store.Store) {
+	settings := st.Settings()
+	now := time.Now()
+	if !checkinDue(settings.AutoCheckin, settings.CheckinHour, st.LastCheckinDay(), now) {
+		return
+	}
+	checkCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	defer cancel()
+	results := srv.CheckinAll(checkCtx)
+	st.SetLastCheckinDay(now.Format("2006-01-02"))
+	// 立即落盘：否则进程在 30s 周期刷盘前退出时，重启会重复跑一次签到。
+	if err := st.Save(); err != nil {
+		log.Printf("签到日期落盘失败: %v", err)
+	}
+	for _, r := range results {
+		if r.Error != "" {
+			log.Printf("签到失败 %s: %s", r.Name, r.Error)
+			continue
+		}
+		log.Printf("签到完成 %s: 积分=%d Spark=%d 增量=%d 领取=%v", r.Name, r.Points, r.Spark, r.PointsDelta, r.Actions)
+	}
+}
+
+// checkinDue reports whether the automatic check-in should run now: enabled, the
+// configured hour reached, and not already run today.
+func checkinDue(auto bool, hour int, lastDay string, now time.Time) bool {
+	if !auto {
+		return false
+	}
+	if hour >= 0 && now.Hour() < hour {
+		return false
+	}
+	return lastDay != now.Format("2006-01-02")
 }
 
 func defaultDataPath() string {

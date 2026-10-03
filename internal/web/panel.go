@@ -106,7 +106,7 @@ button.btn.sm{padding:4px 10px;font-size:12px;font-weight:500}
 <div id="loginview" class="login">
   <div class="card">
     <h2>控制台登录</h2>
-    <p class="hint">输入管理密码。默认密码为 <code>admin</code>，请尽快修改。</p>
+    <p class="hint">输入管理密码。首次启动的随机密码已打印在服务日志中。</p>
     <input id="pwd" type="password" placeholder="密码" autocomplete="current-password">
     <div style="height:12px"></div>
     <button class="btn" id="login" style="width:100%">登录</button>
@@ -187,7 +187,7 @@ button.btn.sm{padding:4px 10px;font-size:12px;font-weight:500}
 <section id="tab-benefits">
   <div class="card">
     <h2>权益总览</h2>
-    <p class="hint">星辰的「签到」由运营弹窗下发（<code>DAILY_REWARD_DIALOG</code>），网关代为完成领取；同时刷新积分、会员与保活。</p>
+    <p class="hint">每日签到 = 网关代调 <code>tenant-app/v2/init-app</code>（发奖入账），再关掉到账横幅 <code>DAILY_REWARD_DIALOG</code>；同时刷新积分、会员与保活。</p>
     <div class="grid c4" id="benefitMetrics"></div>
     <div style="height:14px"></div>
     <div class="row">
@@ -279,7 +279,7 @@ button.btn.sm{padding:4px 10px;font-size:12px;font-weight:500}
       <input type="checkbox" id="sBalanceAware" style="width:auto"> 余额感知轮转（积分耗尽的账号降权）
     </label>
     <label style="display:flex;align-items:center;gap:8px;color:var(--ink)">
-      <input type="checkbox" id="sClaimPopups" style="width:auto"> 领取运营弹窗（含每日签到）
+      <input type="checkbox" id="sClaimPopups" style="width:auto"> 关闭运营弹窗横幅（到账通知）
     </label>
     <label style="display:flex;align-items:center;gap:8px;color:var(--ink)">
       <input type="checkbox" id="sClaimDownload" style="width:auto"> 领取客户端下载奖励
@@ -292,6 +292,7 @@ button.btn.sm{padding:4px 10px;font-size:12px;font-weight:500}
   </div>
   <div class="card">
     <h2>修改管理密码</h2>
+    <p class="hint" id="pwdHint" style="display:none">当前为首次启动自动生成的随机密码，请立即修改。</p>
     <div class="grid c2">
       <div><label>当前密码</label><input id="pCur" type="password"></div>
       <div><label>新密码</label><input id="pNew" type="password"></div>
@@ -306,7 +307,7 @@ button.btn.sm{padding:4px 10px;font-size:12px;font-weight:500}
 
 <script>
 const $ = s => document.querySelector(s);
-const state = { keys: [], accounts: [], models: [], logs: [], benefits: [] };
+const state = { keys: [], accounts: [], models: [], logs: [], benefits: [], pwdPrompted: false };
 
 function toast(msg, isErr){
   const el = $('#toast');
@@ -365,6 +366,15 @@ async function refresh(){
   show();
   state.keys = data.keys||[]; state.accounts = data.accounts||[]; state.models = (data.models&&data.models.items)||[]; state.logs = data.logs||[]; state.benefits = data.benefits||[];
   renderMetrics(data); renderAccounts(); renderBenefits(); renderKeys(); renderModels(data.models); renderLogs(); renderSettings(data.settings); renderQuick(data);
+  const hint = $('#pwdHint');
+  const generated = !!(data.settings && data.settings.password_generated);
+  if (hint) hint.style.display = generated ? 'block' : 'none';
+  if (generated && !state.pwdPrompted) {
+    state.pwdPrompted = true;
+    const tab = document.querySelector('nav button[data-tab="settings"]');
+    if (tab) tab.click();
+    toast('首次启动：请修改自动生成的控制台密码', true);
+  }
 }
 
 function renderMetrics(data){

@@ -28,8 +28,8 @@ services:
       ASTUDIO_PORT: "10086"
       # 状态文件（含账号凭据）必须落在挂载卷里
       ASTUDIO_DATA_PATH: /data/astudio2api-data.json
-      # 每次启动都会覆盖为这个值；留空则使用控制台里保存的密码
-      ASTUDIO_ADMIN_PASSWORD: "${ASTUDIO_ADMIN_PASSWORD:-admin}"
+      # 留空则由网关在首次启动时随机生成并打印在日志中；建议显式设置强密码
+      ASTUDIO_ADMIN_PASSWORD: "${ASTUDIO_ADMIN_PASSWORD:-}"
       TZ: Asia/Shanghai
 
     volumes:

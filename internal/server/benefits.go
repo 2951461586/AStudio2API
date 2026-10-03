@@ -13,10 +13,14 @@ import (
 
 // 权益中心 / 多账号轮转保活。
 //
-// 星辰侧的"签到"不是 Qoder 那种 campaign 接口，而是由运营弹窗下发的：
-//   GET  client-popups/pending   -> [{componentType: DAILY_REWARD_DIALOG, popupId, instanceKey, ...}]
-//   POST client-popups/complete  -> {popupId, instanceKey}   完成即领取
-// 官方客户端在用户关闭弹窗时调用 complete，这里代替用户完成同样的动作。
+// 星辰侧的“签到”由两个动作组成，缺一不可：
+//
+//	POST tenant-app/v2/init-app   -> 每日登录，当日首次调用即入账当日奖励
+//	GET  client-popups/pending    -> 收到的 DAILY_REWARD_DIALOG 只是到账通知
+//	POST client-popups/complete   -> 关闭该横幅（不入账）
+//
+// 只 complete 弹窗不会发放积分；真正的发奖动作是 init-app。官方客户端在启动与
+// 登录时都会调用 init-app，这里代替它每天调用一次。
 //
 // 保活（keepalive）则是定期用会话 cookie 重新换取模型凭据并拉一次账号状态，
 // 既刷新 Bearer，也让 cookie 保持活跃。
@@ -185,7 +189,17 @@ func (s *Server) CheckinAccount(ctx context.Context, id string) *CheckinResult {
 	s.recordBenefit(result.Name, "status", "ok",
 		fmt.Sprintf("积分 %d / Spark %d / 会员 %s", account.PointsBalance, account.SparkBalance, result.Plan))
 
-	// 1) 运营弹窗（含每日签到 DAILY_REWARD_DIALOG）
+	// 1) 每日登录：POST tenant-app/v2/init-app 才是真正发放当日奖励的动作，
+	//    当日首次调用时上游立即入账并下发奖励横幅（重复调用不会重复发放）。
+	//    必须在下面读取弹窗之前执行，否则领不到刚下发的横幅。
+	if _, err := s.Client().InitTenantApp(ctx, session); err != nil {
+		s.recordBenefit(result.Name, "每日登录", "failed", errString(err))
+	} else {
+		result.Actions = append(result.Actions, "每日登录")
+		s.recordBenefit(result.Name, "每日登录", "ok", "")
+	}
+
+	// 2) 运营弹窗（每日奖励横幅只是到账通知，complete 仅用于关闭它）
 	if settings.CheckinCompletePopups {
 		popups, popupErr := s.Client().PendingPopups(ctx, session)
 		if popupErr != nil {
@@ -215,7 +229,7 @@ func (s *Server) CheckinAccount(ctx context.Context, id string) *CheckinResult {
 		}
 	}
 
-	// 2) 客户端下载奖励（一次性；已领过会返回业务错误，属正常）
+	// 3) 客户端下载奖励（一次性；已领过会返回业务错误，属正常）
 	if settings.CheckinClaimDownload {
 		if err := s.Client().ClaimDownloadReward(ctx, session); err != nil {
 			if !isAlreadyClaimed(err) {
@@ -228,7 +242,7 @@ func (s *Server) CheckinAccount(ctx context.Context, id string) *CheckinResult {
 		}
 	}
 
-	// 3) Beta 资格（需要 domainAccount，未配置则跳过）
+	// 4) Beta 资格（需要 domainAccount，未配置则跳过）
 	if settings.CheckinClaimBeta && strings.TrimSpace(account.DomainAccount) != "" {
 		elig, eligErr := s.Client().BetaEligibility(ctx, session)
 		switch {

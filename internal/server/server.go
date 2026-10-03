@@ -248,10 +248,6 @@ func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	if r.URL.Query().Get("page") != "" || r.URL.Query().Get("view") != "" {
-		s.web.ServeHTTP(w, r)
-		return
-	}
 	s.web.ServeHTTP(w, r)
 }
 
